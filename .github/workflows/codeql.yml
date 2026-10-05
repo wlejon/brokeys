@@ -1,0 +1,69 @@
+name: CodeQL
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  schedule:
+    - cron: "0 6 * * 1"
+  workflow_dispatch:
+
+concurrency:
+  group: codeql-${{ github.ref }}
+  cancel-in-progress: true
+
+# brokeys reads keybinding files a user (or a downloaded extension) wrote: VS
+# Code keybindings.json, chord strings and `when` expressions, each through a
+# hand-written parser. Out-of-bounds reads on truncated input and unbounded
+# recursion in the expression parser are the realistic bugs, and they are what
+# the C++ queries look for.
+jobs:
+  analyze:
+    name: Analyze C++
+    runs-on: ubuntu-24.04
+    permissions:
+      security-events: write
+      contents: read
+      actions: read
+
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          path: brokeys
+
+      - uses: actions/checkout@v7
+        with:
+          repository: wlejon/brosearch
+          path: brosearch
+
+      - name: Install Ninja
+        run: sudo apt-get update -qq && sudo apt-get install -y --no-install-recommends ninja-build
+
+      # Tests off: they are scaffolding, and alerts in them would only be noise.
+      - name: Configure
+        run: cmake -S brokeys -B build -G Ninja -DCMAKE_BUILD_TYPE=Debug -DBROKEYS_BUILD_TESTS=OFF
+
+      # brosearch is a sibling with its own CodeQL workflow. Building it here,
+      # ahead of `init`, keeps it out of this analysis: for a compiled language
+      # CodeQL analyses what it observes the compiler compile while tracing, and
+      # `paths-ignore` does not filter compiled sources. Extracting it here
+      # would double-report every finding against the wrong repo.
+      - name: Pre-build sibling code (outside the traced build)
+        run: cmake --build build --parallel 4 --target brosearch
+
+      - name: Initialize CodeQL
+        uses: github/codeql-action/init@v4
+        with:
+          languages: c-cpp
+          build-mode: manual
+          source-root: brokeys
+          queries: security-extended
+
+      # Only brokeys' own TUs are left to compile, so only they are traced.
+      - name: Build brokeys (traced)
+        run: cmake --build build --parallel 4
+
+      - name: Analyze
+        uses: github/codeql-action/analyze@v4
+        with:
+          category: /language:c-cpp

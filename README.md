@@ -1,9 +1,11 @@
 # brokeys
 
-Standalone, reusable C++20 keybinding engine library for the `bro` desktop runtime
-ecosystem. No dependency on bro or bronze; the one sibling it uses is
-[brosearch](../brosearch) (its linear-time regex engine, for `when` clause `=~`), resolved
-from `../brosearch` or `-DBROSEARCH_DIR=<path>`. Its own CMake and ctest,
+[![CI](https://github.com/wlejon/brokeys/actions/workflows/ci.yml/badge.svg)](https://github.com/wlejon/brokeys/actions/workflows/ci.yml)
+
+Standalone, reusable C++20 keybinding engine library for the [bro](https://github.com/wlejon/bro)
+desktop runtime ecosystem. No dependency on bro or bronze; the one sibling it uses is
+[brosearch](https://github.com/wlejon/brosearch) (its linear-time regex engine, for `when`
+clause `=~`; see [Building](#building) for how it is found). Its own CMake and ctest,
 and cross-platform support across Windows (MSVC), Linux (GCC 12+), and macOS (Apple Clang).
 
 ## Model
@@ -129,6 +131,26 @@ include/brokeys/
 
 ## Building
 
+brokeys needs [brosearch](https://github.com/wlejon/brosearch). CMake looks for it in this
+order: a `brosearch` target the parent project already defined; a checkout beside the top-level
+project (`../brosearch`, or `-DBROSEARCH_DIR=<path>`); the `third_party/brosearch` submodule.
+Either clone the two side by side:
+
+```bash
+git clone https://github.com/wlejon/brosearch
+git clone https://github.com/wlejon/brokeys
+```
+
+or use the pinned submodule in a single checkout:
+
+```bash
+git clone https://github.com/wlejon/brokeys
+cd brokeys && git submodule update --init --recursive
+```
+
+A project that vendors brokeys under its own `third_party/` puts brosearch there too, flat
+beside it (`third_party/brosearch`): the fallback is resolved against the top-level project.
+
 Windows (Visual Studio 2022 generator):
 
 ```powershell
@@ -166,3 +188,7 @@ The test suite runs real ctests with the `check.h` harness (no `assert()`, fails
 | `test_json` | JSON parser (comments, escapes, trailing commas), VS Code import/export, round-trip |
 | `test_engine` | Dispatch state machine, pending chords, escape/timeout/unbound cancellation, context tie-breaking, wake callback |
 | `test_trie_oracle` | Documented VS Code test tables, randomized oracle stream comparison against a reference Trie model |
+
+## License
+
+MIT; see [LICENSE](LICENSE).
