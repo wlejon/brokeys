@@ -1,7 +1,9 @@
 # brokeys
 
 Standalone, reusable C++20 keybinding engine library for the `bro` desktop runtime
-ecosystem. No dependency on bro, bronze, or other siblings, its own CMake and ctest,
+ecosystem. No dependency on bro or bronze; the one sibling it uses is
+[brosearch](../brosearch) (its linear-time regex engine, for `when` clause `=~`), resolved
+from `../brosearch` or `-DBROSEARCH_DIR=<path>`. Its own CMake and ctest,
 and cross-platform support across Windows (MSVC), Linux (GCC 12+), and macOS (Apple Clang).
 
 ## Model
@@ -12,7 +14,7 @@ The dispatch engine is a pure state machine designed according to the `bro` hous
 - No mocks in the public API.
 - Report capabilities honestly per platform instead of faking them.
 - Tests are real ctests that exercise real paths and fail in Release (no `assert()`).
-- Self-contained with zero external third-party dependencies.
+- No external third-party dependencies.
 
 ```cpp
 #include <brokeys/keys.h>
@@ -81,7 +83,15 @@ include/brokeys/
   - Unary negation: `!`
   - Logical operators: `&&`, `||`
   - Comparisons: `==`, `!=`, `<`, `<=`, `>`, `>=`
-  - Regular expressions: `=~` (e.g. `resourceScheme =~ /https?|ftp/`, `=~ /pattern/i`)
+  - Regular expressions: `=~` (e.g. `resourceScheme =~ /https?|ftp/`, `=~ /pattern/i`).
+    Patterns are JavaScript RegExp syntax, as in VS Code, run on brosearch's automaton engine,
+    so every match is linear in the text: there is no ReDoS guard and no length cap because
+    nothing can backtrack. Literal patterns compile once at parse time. The JavaScript meaning of
+    `\d` `\w` `\b` (ASCII), `.`, `\s`, identity escapes, literal `{`, class syntax and the flags
+    `i m s u v g y d` is preserved by translation (see `src/js_regex.h`). Backreferences and
+    look-around are not supported: such a pattern evaluates false and
+    `WhenExpr::regex_errors()` says why. Matching is per code point, not UTF-16 unit, and `i`
+    uses Unicode simple case folding.
   - Set / substring membership: `in` (e.g. `editorLangId in allowedLanguages`)
   - Parentheses: `(...)`
 - Specificity / weight computation: exact comparisons and complex constraints compute higher weights to break ties deterministically (matching VS Code keybinding precedence).
@@ -150,7 +160,7 @@ The test suite runs real ctests with the `check.h` harness (no `assert()`, fails
 | Test | Coverage |
 |------|----------|
 | `test_chords` | Modifier masks, key code parsing, alias normalization, sequences, prefixes, hashing |
-| `test_when_expr` | Context hierarchy, operators (`!`, `&&`, `||`, comparisons, `=~` regex, `in`), parens, specificity weights |
+| `test_when_expr` | Context hierarchy, operators (`!`, `&&`, `||`, comparisons, `=~` regex, `in`), parens, specificity weights; JavaScript regex dialect translation; catastrophic-backtracking patterns (`(a+)+`, `(a|a)*`, `(.*a){12}`, ...) giving correct answers on 200k-character text with linear scaling |
 | `test_layout` | QWERTY, AZERTY, Dvorak, Colemak mappings, physical vs character layout matching |
 | `test_conflicts` | Exact duplicates, prefix shadowing, mutually exclusive context, removal rules, reports |
 | `test_json` | JSON parser (comments, escapes, trailing commas), VS Code import/export, round-trip |

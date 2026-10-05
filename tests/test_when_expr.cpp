@@ -1,8 +1,10 @@
 #include "check.h"
 #include <brokeys/context.h>
 #include <brokeys/when_expr.h>
+#include <algorithm>
 #include <chrono>
 #include <iostream>
+#include <string>
 
 using namespace bro::keys;
 
@@ -129,23 +131,154 @@ static void test_vscode_regex_patterns() {
     CHECK(w_sub->evaluate(ctx));
 }
 
-static void test_regex_redos_guard() {
+// Evaluates `key =~ /pattern/flags` against `text`.
+static bool rx(const std::string& pattern_and_flags, const std::string& text) {
     Context ctx;
-    // Pathological nested repetition that triggers exponential catastrophic backtracking in unshielded regex engines:
-    // (a+)+ applied to "aaaaaaaaaaaaaaaaaaaaaaaaaaaa!"
-    ctx.set_string("maliciousInput", "aaaaaaaaaaaaaaaaaaaaaaaaaaaa!");
-    auto w_redos = WhenExpr::parse("maliciousInput =~ /^([a-zA-Z0-9]+)+$/");
+    ctx.set_string("k", text);
+    auto w = WhenExpr::parse("k =~ " + pattern_and_flags);
+    CHECK(w->regex_errors().empty());
+    return w->evaluate(ctx);
+}
 
-    // Must evaluate virtually instantaneously (guarded against ReDoS)
-    auto t0 = std::chrono::high_resolution_clock::now();
-    bool result = w_redos->evaluate(ctx);
-    auto t1 = std::chrono::high_resolution_clock::now();
+static double ms_since(std::chrono::steady_clock::time_point t0) {
+    return std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count();
+}
 
-    CHECK(!result); // Safely rejected / no match
+// Patterns that take exponential time on a backtracking engine (std::regex, PCRE, V8's irregexp)
+// — the ones a ReDoS guard used to refuse outright, along with any text over 2 KiB. They now run on
+// brosearch's automaton and give the true answer in time linear in the text.
+static void test_regex_pathological_linear() {
+    struct Case {
+        const char* pattern;
+        char fill;
+        const char* tail;
+        bool matches;
+    };
+    const Case cases[] = {
+        {"/^([a-zA-Z0-9]+)+$/", 'a', "!", false},
+        {"/^([a-zA-Z0-9]+)+$/", 'a', "b", true},
+        {"/^(a+)+$/", 'a', "!", false},
+        {"/^(a*)*b$/", 'a', "", false},
+        {"/^(a|a)*$/", 'a', "c", false},
+        {"/^(a|aa)+$/", 'a', "", true},
+        {"/^(\\w+\\s?)*$/", 'x', "!", false},
+        {"/(x+x+)+y/", 'x', "", false},
+        {"/^(.*a){12}$/", 'a', "b", false},
+        {"/^(.*a){12}$/", 'a', "", true},
+        {"/^([a-z]+)*[0-9]$/i", 'Q', "?", false},
+    };
+    // 40 characters is ~2^40 backtracking steps for the nested-quantifier patterns; 200k
+    // characters checks the cost is linear rather than merely sub-exponential.
+    for (size_t n : {size_t(40), size_t(200000)}) {
+        for (const Case& c : cases) {
+            std::string text(n, c.fill);
+            text += c.tail;
+            auto t0 = std::chrono::steady_clock::now();
+            bool got = rx(c.pattern, text);
+            double ms = ms_since(t0);
+            if (got != c.matches) {
+                std::cout << "  pattern " << c.pattern << " on " << n << " chars: got " << got << "\n";
+            }
+            CHECK_EQ(got, c.matches);
+            // Generous: Debug builds of the engine on a loaded CI runner. Backtracking needs
+            // minutes-to-forever for any of these.
+            CHECK(ms < 2000.0);
+        }
+    }
 
-    double elapsed_ms = std::chrono::duration<double, std::milli>(t1 - t0).count();
-    std::cout << "ReDoS test elapsed: " << elapsed_ms << " ms (safely rejected)\n";
-    CHECK(elapsed_ms < 50.0); // Sub-50ms execution
+    // Linear scaling: 16x the text must not cost more than ~64x the time.
+    const char* pattern = "/^(\\w+\\s?)*$/";
+    auto time_for = [&](size_t n) {
+        std::string text(n, 'x');
+        text += '!';
+        double best = 1e30;
+        for (int rep = 0; rep < 3; ++rep) {
+            auto t0 = std::chrono::steady_clock::now();
+            CHECK(!rx(pattern, text));
+            best = std::min(best, ms_since(t0));
+        }
+        return best;
+    };
+    double small = time_for(20000);
+    double large = time_for(320000);
+    std::cout << "  linear scaling: 20k chars " << small << " ms, 320k chars " << large << " ms\n";
+    CHECK(large < small * 64.0 + 20.0);
+}
+
+// JavaScript RegExp meaning is preserved where the Rust dialect differs.
+static void test_regex_js_dialect() {
+    // \d \w \b are ASCII in JavaScript (Unicode in Rust).
+    CHECK(rx("/^\\d+$/", "123"));
+    CHECK(!rx("/^\\d+$/", "\xD9\xA3"));  // ARABIC-INDIC DIGIT THREE
+    CHECK(rx("/^\\w+$/", "abc_09"));
+    CHECK(!rx("/^\\w+$/", "caf\xC3\xA9"));
+    CHECK(rx("/^\\W$/", "\xC3\xA9"));
+    CHECK(rx("/\\bfoo\\b/", "a foo b"));
+    CHECK(rx("/\\bfoo/", "\xC3\xA9" "foo"));  // é is not a JS word character
+    CHECK(!rx("/^\\w$/i", "\xE2\x84\xAA"));    // KELVIN SIGN stays out of /\w/i
+    // `.` stops at all JavaScript line terminators unless /s.
+    CHECK(!rx("/^a.b$/", "a\rb"));
+    CHECK(!rx("/^a.b$/", "a\xE2\x80\xA8" "b"));
+    CHECK(rx("/^a.b$/s", "a\nb"));
+    CHECK(rx("/^a.b$/", "a\xC3\xA9" "b"));
+    // \s includes U+FEFF.
+    CHECK(rx("/^\\s$/", "\xEF\xBB\xBF"));
+    // Identity escapes and literal braces / brackets.
+    CHECK(rx("/^\\<tag\\>$/", "<tag>"));
+    CHECK(rx("/^a{$/", "a{"));
+    CHECK(rx("/^{x}$/", "{x}"));
+    CHECK(rx("/^a{2}$/", "aa"));
+    CHECK(rx("/^a{2,}$/", "aaaa"));
+    CHECK(!rx("/^a{2,3}$/", "aaaa"));
+    CHECK(rx("/^]$/", "]"));
+    CHECK(rx("/^\\e$/", "e"));
+    // Classes: '[' '&&' '--' '~~' are literals; shorthand next to '-' keeps '-' literal.
+    CHECK(rx("/^[[]$/", "["));
+    CHECK(rx("/^[a&&b]+$/", "a&b"));
+    CHECK(rx("/^[~~]$/", "~"));
+    CHECK(rx("/^[\\w-]+$/", "foo-bar"));
+    CHECK(rx("/^[\\w-.]+$/", "foo-bar.baz"));
+    CHECK(rx("/^[a-c-e]+$/", "ab-e"));
+    CHECK(!rx("/^[a-c-e]+$/", "d"));
+    CHECK(rx("/^[\\b]$/", "\b"));
+    CHECK(!rx("/[]/", "anything"));
+    CHECK(rx("/^[^]$/", "\n"));
+    CHECK(rx("/^[^\\d\\s]+$/", "abc"));
+    // Escapes.
+    CHECK(rx("/^\\x41\\u0042$/", "AB"));
+    CHECK(rx("/^\\uD83D\\uDE00$/", "\xF0\x9F\x98\x80"));
+    CHECK(rx("/^\\u{1F600}$/u", "\xF0\x9F\x98\x80"));
+    CHECK(rx("/^\\p{L}+$/u", "caf\xC3\xA9"));
+    CHECK(rx("/^\\cJ$/", "\n"));
+    CHECK(rx("/^a\\/b$/", "a/b"));
+    CHECK(rx("/^[/]$/", "/"));
+    // Flags.
+    CHECK(rx("/^PYTHON$/i", "python"));
+    CHECK(rx("/^b$/m", "a\nb\nc"));
+    CHECK(!rx("/^b$/", "a\nb\nc"));
+    CHECK(rx("/a/gy", "cat"));
+    CHECK(rx("/^(?<word>[a-z]+)$/", "named"));
+    // Long text is no longer refused.
+    CHECK(rx("/needle$/", std::string(100000, 'h') + "needle"));
+
+    // Unsupported constructs report why and evaluate false; they never hang.
+    Context ctx;
+    ctx.set_string("k", "abab");
+    for (const char* bad : {"k =~ /(ab)\\1/", "k =~ /a(?=b)/", "k =~ /a(?!c)/", "k =~ /(?<=a)b/",
+                            "k =~ /(?<!c)b/", "k =~ /(?<x>a)\\k<x>/", "k =~ /a/q", "k =~ /[a/",
+                            "k =~ /\\01/"}) {
+        auto w = WhenExpr::parse(bad);
+        CHECK(!w->evaluate(ctx));
+        CHECK_EQ(w->regex_errors().size(), size_t(1));
+    }
+    auto w = WhenExpr::parse("k =~ /(ab)\\1/");
+    CHECK(w->regex_errors()[0].find("backreference") != std::string::npos);
+
+    // A pattern taken from the context is compiled at evaluation time.
+    ctx.set_string("pat", "^a(ba)+b$");
+    CHECK(WhenExpr::parse("k =~ pat")->evaluate(ctx));
+    ctx.set_string("pat", "(a)\\1");
+    CHECK(!WhenExpr::parse("k =~ pat")->evaluate(ctx));
 }
 
 int main() {
@@ -153,6 +286,7 @@ int main() {
     test_when_eval();
     test_when_specificity();
     test_vscode_regex_patterns();
-    test_regex_redos_guard();
+    test_regex_pathological_linear();
+    test_regex_js_dialect();
     return bktest::finish("test_when_expr");
 }

@@ -2,10 +2,13 @@
 
 #include <brokeys/context.h>
 #include <memory>
-#include <regex>
 #include <string>
 #include <string_view>
 #include <vector>
+
+namespace bro::search {
+class Regex;
+}
 
 namespace bro::keys {
 
@@ -36,6 +39,11 @@ struct WhenNode {
     std::string str_val;
     std::string regex_flags;
     std::vector<WhenNode> children;
+    // RegexMatch with a literal right-hand side: the pattern compiled once at parse time on
+    // brosearch's linear-time engine (JavaScript syntax translated; see src/js_regex.h), or the
+    // reason it could not be compiled (the match then evaluates false).
+    std::shared_ptr<const bro::search::Regex> regex;
+    std::string regex_error;
 
     int compute_weight() const;
     void collect_keys(std::vector<std::string>& out) const;
@@ -51,6 +59,8 @@ public:
     const std::string& raw() const noexcept { return raw_; }
     const WhenNode& root() const noexcept { return root_; }
     std::vector<std::string> referenced_keys() const;
+    // Messages for `=~` literals that could not be compiled (unsupported or malformed syntax).
+    std::vector<std::string> regex_errors() const;
 
     static std::shared_ptr<WhenExpr> parse(std::string_view expression);
     static bool eval_node(const WhenNode& node, const Context& context);

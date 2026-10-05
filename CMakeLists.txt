@@ -27,6 +27,22 @@ function(brokeys_warnings target)
     endif()
 endfunction()
 
+# ---- brosearch -----------------------------------------------------------------
+# `when` clause `=~` runs on brosearch's linear-time regex engine. Resolved like the other
+# siblings: an existing `brosearch` target (a superbuild already added it) wins; otherwise the
+# standalone repo beside this one (../brosearch), overridable with -DBROSEARCH_DIR=<path>.
+if(NOT TARGET brosearch)
+    get_filename_component(_brosearch_default "${CMAKE_CURRENT_SOURCE_DIR}/../brosearch" ABSOLUTE)
+    set(BROSEARCH_DIR "${_brosearch_default}" CACHE PATH "Path to the brosearch repo")
+    if(NOT EXISTS "${BROSEARCH_DIR}/CMakeLists.txt")
+        message(FATAL_ERROR "brokeys needs brosearch: clone it beside brokeys (../brosearch) or pass -DBROSEARCH_DIR=<path>")
+    endif()
+    message(STATUS "brokeys: brosearch from ${BROSEARCH_DIR}")
+    set(BROSEARCH_BUILD_TESTS OFF CACHE BOOL "" FORCE)
+    set(BROSEARCH_BUILD_TOOLS OFF CACHE BOOL "" FORCE)
+    add_subdirectory("${BROSEARCH_DIR}" "${CMAKE_BINARY_DIR}/brosearch" EXCLUDE_FROM_ALL)
+endif()
+
 file(GLOB BROKEYS_SOURCES CONFIGURE_DEPENDS src/*.cpp)
 
 add_library(brokeys STATIC ${BROKEYS_SOURCES})
@@ -36,6 +52,8 @@ target_include_directories(brokeys PUBLIC
     $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
     $<INSTALL_INTERFACE:include>
 )
+
+target_link_libraries(brokeys PRIVATE brosearch)
 
 brokeys_warnings(brokeys)
 
