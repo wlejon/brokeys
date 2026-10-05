@@ -2,7 +2,9 @@
 #include <algorithm>
 #include <cctype>
 #include <cmath>
+#include <mutex>
 #include <sstream>
+#include <unordered_map>
 
 namespace bro::keys {
 
@@ -470,6 +472,174 @@ std::shared_ptr<WhenExpr> WhenExpr::parse(std::string_view expression) {
     return std::make_shared<WhenExpr>(std::move(root), std::string(expression));
 }
 
+namespace {
+
+bool iequals(std::string_view a, std::string_view b) {
+    if (a.size() != b.size()) return false;
+    for (size_t i = 0; i < a.size(); ++i) {
+        if (std::tolower(static_cast<unsigned char>(a[i])) !=
+            std::tolower(static_cast<unsigned char>(b[i]))) {
+            return false;
+        }
+    }
+    return true;
+}
+
+bool istarts_with(std::string_view str, std::string_view prefix) {
+    if (str.size() < prefix.size()) return false;
+    return iequals(str.substr(0, prefix.size()), prefix);
+}
+
+bool ifind(std::string_view haystack, std::string_view needle) {
+    if (needle.empty()) return true;
+    if (needle.size() > haystack.size()) return false;
+    for (size_t i = 0; i <= haystack.size() - needle.size(); ++i) {
+        if (iequals(haystack.substr(i, needle.size()), needle)) return true;
+    }
+    return false;
+}
+
+// Detect nested quantifiers prone to catastrophic backtracking / ReDoS
+bool is_vulnerable_regex(std::string_view pat) {
+    for (size_t i = 0; i + 2 < pat.size(); ++i) {
+        if ((pat[i] == '+' || pat[i] == '*') && pat[i + 1] == ')' && (pat[i + 2] == '+' || pat[i + 2] == '*')) {
+            return true;
+        }
+    }
+    return false;
+}
+
+bool safe_regex_match(std::string_view text, std::string_view pattern, std::string_view flags) {
+    // 1. Size guards against runaway input
+    if (pattern.size() > 256 || text.size() > 2048) {
+        return false;
+    }
+
+    // 2. Reject catastrophic backtracking patterns
+    if (is_vulnerable_regex(pattern)) {
+        return false;
+    }
+
+    bool icase = (flags.find('i') != std::string_view::npos);
+
+    // 3. Fast linear path for common VS Code patterns
+    // Pattern: ^...$ (exact match)
+    if (pattern.size() >= 2 && pattern.front() == '^' && pattern.back() == '$') {
+        std::string_view inner = pattern.substr(1, pattern.size() - 2);
+
+        // Pattern: ^(a|b|c)$ (choice of literals)
+        if (inner.size() >= 2 && inner.front() == '(' && inner.back() == ')') {
+            std::string_view choices = inner.substr(1, inner.size() - 2);
+            if (choices.find_first_of("^$*+?[].\\") == std::string_view::npos) {
+                size_t start = 0;
+                while (start < choices.size()) {
+                    size_t sep = choices.find('|', start);
+                    std::string_view choice = (sep == std::string_view::npos) ? choices.substr(start) : choices.substr(start, sep - start);
+                    if (icase ? iequals(text, choice) : (text == choice)) {
+                        return true;
+                    }
+                    if (sep == std::string_view::npos) break;
+                    start = sep + 1;
+                }
+                return false;
+            }
+        }
+
+        // Pattern: ^literal$ (exact literal match)
+        if (inner.find_first_of("^$*+?()[]{}|\\") == std::string_view::npos) {
+            return icase ? iequals(text, inner) : (text == inner);
+        }
+    }
+
+    // Pattern: ^prefix (prefix match, e.g. ^workbench\.view\.)
+    if (pattern.size() >= 1 && pattern.front() == '^') {
+        std::string_view prefix = pattern.substr(1);
+        if (prefix.find_first_of("^$*+?()[]{}|") == std::string_view::npos) {
+            std::string clean;
+            clean.reserve(prefix.size());
+            for (size_t i = 0; i < prefix.size(); ++i) {
+                if (prefix[i] == '\\' && i + 1 < prefix.size()) {
+                    clean.push_back(prefix[++i]);
+                } else {
+                    clean.push_back(prefix[i]);
+                }
+            }
+            return icase ? istarts_with(text, clean) : text.starts_with(clean);
+        }
+    }
+
+    // Pattern: \.(ts|js|jsx|tsx)$ or \.ext$ (suffix match)
+    if (pattern.size() >= 2 && pattern.back() == '$') {
+        std::string_view suffix_pat = pattern.substr(0, pattern.size() - 1);
+        if (suffix_pat.starts_with("^\\.") || suffix_pat.starts_with("\\.")) {
+            size_t pfx_len = suffix_pat.starts_with("^\\.") ? 3 : 2;
+            std::string_view exts = suffix_pat.substr(pfx_len);
+            if (exts.size() >= 2 && exts.front() == '(' && exts.back() == ')') {
+                exts = exts.substr(1, exts.size() - 2);
+            }
+            if (exts.find_first_of("^$*+?()[]{}|\\") == std::string_view::npos || exts.find('|') != std::string_view::npos) {
+                size_t last_dot = text.rfind('.');
+                if (last_dot != std::string_view::npos) {
+                    std::string_view text_ext = text.substr(last_dot + 1);
+                    size_t start = 0;
+                    while (start < exts.size()) {
+                        size_t sep = exts.find('|', start);
+                        std::string_view cand = (sep == std::string_view::npos) ? exts.substr(start) : exts.substr(start, sep - start);
+                        if (icase ? iequals(text_ext, cand) : (text_ext == cand)) {
+                            return true;
+                        }
+                        if (sep == std::string_view::npos) break;
+                        start = sep + 1;
+                    }
+                    return false;
+                }
+            }
+        }
+    }
+
+    // 4. Substring literal without metacharacters: /needle/
+    if (pattern.find_first_of("^$*+?()[]{}|\\") == std::string_view::npos) {
+        return icase ? ifind(text, pattern) : (text.find(pattern) != std::string_view::npos);
+    }
+
+    // 5. General regex with thread-safe pre-compiled cache
+    static std::mutex cache_mtx;
+    static std::unordered_map<std::string, std::shared_ptr<std::regex>> cache;
+
+    std::string cache_key = std::string(pattern) + '\0' + (icase ? "i" : "");
+    std::shared_ptr<std::regex> re;
+    {
+        std::lock_guard<std::mutex> lock(cache_mtx);
+        auto it = cache.find(cache_key);
+        if (it != cache.end()) {
+            re = it->second;
+        }
+    }
+
+    if (!re) {
+        try {
+            auto syntax = std::regex_constants::ECMAScript;
+            if (icase) syntax |= std::regex_constants::icase;
+            re = std::make_shared<std::regex>(std::string(pattern), syntax);
+            std::lock_guard<std::mutex> lock(cache_mtx);
+            if (cache.size() < 128) {
+                cache.emplace(cache_key, re);
+            }
+        } catch (...) {
+            return false;
+        }
+    }
+
+    try {
+        std::string s_text(text);
+        return std::regex_search(s_text, *re);
+    } catch (...) {
+        return false;
+    }
+}
+
+} // namespace
+
 bool WhenExpr::eval_node(const WhenNode& node, const Context& context) {
     switch (node.op) {
         case WhenOp::LiteralBool:
@@ -545,16 +715,7 @@ bool WhenExpr::eval_node(const WhenNode& node, const Context& context) {
                 pattern = Context::value_to_string(resolve_node_value(node.children[1], context));
             }
 
-            try {
-                auto syntax = std::regex_constants::ECMAScript;
-                if (flags.find('i') != std::string::npos) {
-                    syntax |= std::regex_constants::icase;
-                }
-                std::regex re(pattern, syntax);
-                return std::regex_search(text, re);
-            } catch (...) {
-                return false;
-            }
+            return safe_regex_match(text, pattern, flags);
         }
 
         case WhenOp::In: {

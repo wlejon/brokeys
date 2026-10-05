@@ -1,6 +1,8 @@
 #include "check.h"
 #include <brokeys/context.h>
 #include <brokeys/when_expr.h>
+#include <chrono>
+#include <iostream>
 
 using namespace bro::keys;
 
@@ -83,9 +85,74 @@ static void test_when_specificity() {
     CHECK_EQ(keys.size(), 2);
 }
 
+static void test_vscode_regex_patterns() {
+    Context ctx;
+
+    // 1. File extension alternations
+    ctx.set_string("resourceExtname", ".tsx");
+    auto w_ext = WhenExpr::parse("resourceExtname =~ /\\.(ts|js|jsx|tsx)$/");
+    CHECK(w_ext->evaluate(ctx));
+
+    ctx.set_string("resourceExtname", ".cpp");
+    CHECK(!w_ext->evaluate(ctx));
+
+    // 2. Exact choice of literals
+    ctx.set_string("renderWhitespace", "boundary");
+    auto w_choice = WhenExpr::parse("renderWhitespace =~ /^(none|boundary|all)$/");
+    CHECK(w_choice->evaluate(ctx));
+
+    ctx.set_string("renderWhitespace", "selection");
+    CHECK(!w_choice->evaluate(ctx));
+
+    // 3. Prefix matching
+    ctx.set_string("view", "workbench.view.explorer");
+    auto w_view = WhenExpr::parse("view =~ /^workbench\\.view\\./");
+    CHECK(w_view->evaluate(ctx));
+
+    ctx.set_string("view", "terminal.panel");
+    CHECK(!w_view->evaluate(ctx));
+
+    // 4. Case-insensitive exact match
+    ctx.set_string("editorLangId", "Python");
+    auto w_case = WhenExpr::parse("editorLangId =~ /^python$/i");
+    CHECK(w_case->evaluate(ctx));
+
+    ctx.set_string("editorLangId", "PYTHON");
+    CHECK(w_case->evaluate(ctx));
+
+    ctx.set_string("editorLangId", "rust");
+    CHECK(!w_case->evaluate(ctx));
+
+    // 5. Substring search
+    ctx.set_string("resourcePath", "/home/user/project/src/index.ts");
+    auto w_sub = WhenExpr::parse("resourcePath =~ /project\\/src/");
+    CHECK(w_sub->evaluate(ctx));
+}
+
+static void test_regex_redos_guard() {
+    Context ctx;
+    // Pathological nested repetition that triggers exponential catastrophic backtracking in unshielded regex engines:
+    // (a+)+ applied to "aaaaaaaaaaaaaaaaaaaaaaaaaaaa!"
+    ctx.set_string("maliciousInput", "aaaaaaaaaaaaaaaaaaaaaaaaaaaa!");
+    auto w_redos = WhenExpr::parse("maliciousInput =~ /^([a-zA-Z0-9]+)+$/");
+
+    // Must evaluate virtually instantaneously (guarded against ReDoS)
+    auto t0 = std::chrono::high_resolution_clock::now();
+    bool result = w_redos->evaluate(ctx);
+    auto t1 = std::chrono::high_resolution_clock::now();
+
+    CHECK(!result); // Safely rejected / no match
+
+    double elapsed_ms = std::chrono::duration<double, std::milli>(t1 - t0).count();
+    std::cout << "ReDoS test elapsed: " << elapsed_ms << " ms (safely rejected)\n";
+    CHECK(elapsed_ms < 50.0); // Sub-50ms execution
+}
+
 int main() {
     test_context();
     test_when_eval();
     test_when_specificity();
+    test_vscode_regex_patterns();
+    test_regex_redos_guard();
     return bktest::finish("test_when_expr");
 }
