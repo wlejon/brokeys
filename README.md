@@ -2,13 +2,30 @@
 
 [![CI](https://github.com/wlejon/brokeys/actions/workflows/ci.yml/badge.svg)](https://github.com/wlejon/brokeys/actions/workflows/ci.yml)
 
-Standalone, reusable C++20 keybinding engine library for the [bro](https://github.com/wlejon/bro)
-desktop runtime ecosystem. No dependency on bro or bronze; the one sibling it uses is
-[brosearch](https://github.com/wlejon/brosearch) (its linear-time regex engine, for `when`
-clause `=~`; see [Building](#building) for how it is found). Its own CMake and ctest,
-and cross-platform support across Windows (MSVC), Linux (GCC 12+), and macOS (Apple Clang).
+Standalone, reusable C++20 keybinding engine library. It provides a pure state
+machine for chord and sequence dispatch, layout-aware physical-to-character key
+matching, VS Code-compatible `when` clause evaluation with linear-time regular
+expressions, and conflict detection.
 
-## Model
+In the [Bro ecosystem](https://github.com/wlejon/bro/blob/main/docs/ecosystem.md),
+brokeys sits in the desktop and terminal layer:
+- [bro](https://github.com/wlejon/bro) links it under `BRO_WITH_KEYS` to dispatch application and window shortcuts;
+- It provides the JavaScript binding (`brokeys_api`) mounted at `bro.keys` for runtime apps;
+- It uses [brosearch](https://github.com/wlejon/brosearch) for its linear-time regex engine;
+- It has no dependencies on bro or bronze and can be embedded standalone into any C++20 terminal or GUI application.
+
+## Platforms
+
+brokeys is written in pure C++20 with standard library and brosearch dependencies (zero third-party libraries).
+Platform support is verified in continuous integration across GCC, Clang, and MSVC:
+
+| Platform | Compiler | Dependencies | Verification |
+|----------|----------|--------------|--------------|
+| **Linux** (x86-64, AArch64) | GCC 12+, Clang 16+ | C++20 standard library, brosearch | Release, Debug, gcov coverage |
+| **Windows** (x86-64) | MSVC 2022+ | C++20 standard library, brosearch | Release, Debug CRT |
+| **macOS** (Apple Silicon, Intel) | Apple Clang | C++20 standard library, brosearch | Release |
+
+## Model & Architecture
 
 The dispatch engine is a pure state machine designed according to the `bro` house style:
 - Value snapshots are pushed into a thread-safe `MessageQueue<DispatchEvent>` (`event_queue.h`); the host drains it on its own thread whenever convenient.
@@ -85,15 +102,7 @@ include/brokeys/
   - Unary negation: `!`
   - Logical operators: `&&`, `||`
   - Comparisons: `==`, `!=`, `<`, `<=`, `>`, `>=`
-  - Regular expressions: `=~` (e.g. `resourceScheme =~ /https?|ftp/`, `=~ /pattern/i`).
-    Patterns are JavaScript RegExp syntax, as in VS Code, run on brosearch's automaton engine,
-    so every match is linear in the text: there is no ReDoS guard and no length cap because
-    nothing can backtrack. Literal patterns compile once at parse time. The JavaScript meaning of
-    `\d` `\w` `\b` (ASCII), `.`, `\s`, identity escapes, literal `{`, class syntax and the flags
-    `i m s u v g y d` is preserved by translation (see `src/js_regex.h`). Backreferences and
-    look-around are not supported: such a pattern evaluates false and
-    `WhenExpr::regex_errors()` says why. Matching is per code point, not UTF-16 unit, and `i`
-    uses Unicode simple case folding.
+  - Regular expressions: `=~` (e.g. `resourceScheme =~ /https?|ftp/`, `=~ /pattern/i`). Patterns use JavaScript RegExp syntax run on brosearch's linear-time automaton engine, ensuring every match scales linearly with text length (no ReDoS vulnerability, no length cap).
   - Set / substring membership: `in` (e.g. `editorLangId in allowedLanguages`)
   - Parentheses: `(...)`
 - Specificity / weight computation: exact comparisons and complex constraints compute higher weights to break ties deterministically (matching VS Code keybinding precedence).
@@ -129,55 +138,64 @@ include/brokeys/
   3. Registration order (later bindings override earlier ones)
 - Event snapshots pushed to `MessageQueue<DispatchEvent>`.
 
-## Building
+## Building and embedding
 
-brokeys needs [brosearch](https://github.com/wlejon/brosearch). CMake looks for it in this
-order: a `brosearch` target the parent project already defined; a checkout beside the top-level
-project (`../brosearch`, or `-DBROSEARCH_DIR=<path>`); the `third_party/brosearch` submodule.
-Either clone the two side by side:
+### Dependencies
+
+brokeys requires [brosearch](https://github.com/wlejon/brosearch) for linear-time regex matching in `when` clauses. CMake resolves `brosearch` automatically in this order:
+1. An existing `brosearch` target already configured in a parent superbuild (e.g. `bro`).
+2. Sibling directory: `../brosearch` relative to the top-level project, or an explicit `-DBROSEARCH_DIR=<path>`.
+3. Vendored submodule: `third_party/brosearch` within the repository.
+
+### Standalone build
 
 ```bash
+# Sibling layout (clone side by side):
 git clone https://github.com/wlejon/brosearch
 git clone https://github.com/wlejon/brokeys
-```
 
-or use the pinned submodule in a single checkout:
-
-```bash
+# Or single checkout with submodules:
 git clone https://github.com/wlejon/brokeys
 cd brokeys && git submodule update --init --recursive
-```
 
-A project that vendors brokeys under its own `third_party/` puts brosearch there too, flat
-beside it (`third_party/brosearch`): the fallback is resolved against the top-level project.
+# Linux / macOS (Ninja)
+cmake -B build-release -G Ninja -DCMAKE_BUILD_TYPE=Release
+cmake --build build-release
+ctest --test-dir build-release --output-on-failure
 
-Windows (Visual Studio 2022 generator):
-
-```powershell
+# Windows (MSVC / Visual Studio 2022)
 cmake -B build
 cmake --build build --config Release
 ctest --test-dir build -C Release --output-on-failure
 ```
 
-Linux (GCC 12+, Ninja):
+### Embedding in a CMake project
 
-```bash
-cmake -B build-release -G Ninja -DCMAKE_BUILD_TYPE=Release
-cmake --build build-release
-ctest --test-dir build-release --output-on-failure
+Consumers embed brokeys via `add_subdirectory()` and link against `brokeys::brokeys`. Either clone `brokeys` and `brosearch` as siblings, or place them flat under `third_party/`:
+
+```
+my_project/
+  third_party/
+    brokeys/
+    brosearch/
 ```
 
-macOS (Apple Clang, Ninja):
+In your `CMakeLists.txt`:
 
-```bash
-cmake -B build-release -G Ninja -DCMAKE_BUILD_TYPE=Release
-cmake --build build-release
-ctest --test-dir build-release --output-on-failure
+```cmake
+add_subdirectory(third_party/brokeys)
+
+target_link_libraries(my_app PRIVATE brokeys::brokeys)
 ```
+
+Configuration options:
+- `BROKEYS_BUILD_TESTS`: Build ctest suite (default `ON` when top-level, `OFF` when embedded via `add_subdirectory`).
+- `BROKEYS_ENABLE_API`: Build Bronze JavaScript API binding (default `ON` if Bronze is detected).
+- `BROKEYS_COVERAGE`: Build with gcov coverage instrumentation on GCC/Clang (default `OFF`).
 
 ## Tests
 
-The test suite runs real ctests with the `check.h` harness (no `assert()`, fails in Release):
+The test suite runs real ctests with the `check.h` harness (no reliance on `assert()`, failure in Release builds):
 
 | Test | Coverage |
 |------|----------|
@@ -188,6 +206,10 @@ The test suite runs real ctests with the `check.h` harness (no `assert()`, fails
 | `test_json` | JSON parser (comments, escapes, trailing commas), VS Code import/export, round-trip |
 | `test_engine` | Dispatch state machine, pending chords, escape/timeout/unbound cancellation, context tie-breaking, wake callback |
 | `test_trie_oracle` | Documented VS Code test tables, randomized oracle stream comparison against a reference Trie model |
+
+### Zero CI skips
+
+All unit tests and the trie differential oracle run completely offline. There are **zero network skips and zero platform skips** across Windows, Linux, and macOS in continuous integration.
 
 ## License
 
