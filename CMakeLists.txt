@@ -80,7 +80,10 @@ target_link_libraries(brokeys PRIVATE brosearch)
 brokeys_warnings(brokeys)
 
 # --- Standalone Bronze JavaScript API ---
-option(BROKEYS_ENABLE_API "Build Bronze JavaScript API" ON)
+# On by default only when brokeys is the top-level project. A library that
+# consumes brokeys then never needs bronze checked out; bro, the one consumer
+# that wants the api, forces BROKEYS_ENABLE_API ON.
+option(BROKEYS_ENABLE_API "Build Bronze JavaScript API" ${PROJECT_IS_TOP_LEVEL})
 if(BROKEYS_ENABLE_API)
     # bronze, the JavaScript runtime the api binds: a checkout beside this one
     # (../bronze, with ../brass beside it — bronze resolves and

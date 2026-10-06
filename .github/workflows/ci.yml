@@ -17,6 +17,14 @@ concurrency:
 #     $GITHUB_WORKSPACE/
 #       brokeys/     <- this repo, checked out into a named path, not the root
 #       brosearch/
+#       bronze/      <- the JavaScript runtime brokeys_api binds
+#       brass/       <- bronze's code generator
+#
+# bronze and brass are laid out by bronze's checkout-toolchain action in every
+# job (the api, BROKEYS_ENABLE_API, is on when brokeys is the top-level
+# project) and compile inside this build tree with the job's own compiler and
+# CRT, which makes brokeys_test_api the check that the library works the way
+# bro uses it. brosearch, nested below brokeys, leaves its own api off.
 #
 # Hence `path:` on the checkouts and `cmake -S brokeys`. brosearch is taken
 # from main, which mirrors how the stack is developed (everything tracks
@@ -48,6 +56,8 @@ jobs:
         with:
           repository: wlejon/brosearch
           path: brosearch
+
+      - uses: wlejon/bronze/.github/actions/checkout-toolchain@main
 
       - name: Install Ninja (Linux)
         if: runner.os == 'Linux'
@@ -88,6 +98,11 @@ jobs:
           path: brokeys
           submodules: recursive
 
+      # bronze and brass are the documented exception to the submodule rule:
+      # the api has to compile against the bronze of the program that loads
+      # it, so there is no submodule for either.
+      - uses: wlejon/bronze/.github/actions/checkout-toolchain@main
+
       - name: Install Ninja
         run: sudo apt-get update -qq && sudo apt-get install -y --no-install-recommends ninja-build
 
@@ -119,6 +134,8 @@ jobs:
         with:
           repository: wlejon/brosearch
           path: brosearch
+
+      - uses: wlejon/bronze/.github/actions/checkout-toolchain@main
 
       - name: Install gcovr + Ninja
         run: sudo apt-get update -qq && sudo apt-get install -y --no-install-recommends gcovr ninja-build
