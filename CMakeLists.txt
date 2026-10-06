@@ -25,9 +25,11 @@ if(BROKEYS_COVERAGE AND _brokeys_top_level)
     add_link_options(--coverage)
 endif()
 
-if(MSVC AND _brokeys_top_level)
-    set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
-endif()
+# The MSVC CRT stays CMake's default, the DLL one (/MD, /MDd), as in bro. The
+# api's test links bronze_runtime_shared.dll, and objects allocated on one side
+# of that boundary are freed on the other: with the static CRT every module has
+# its own heap, so that is a cross-heap free (in Debug, the CRT's
+# __acrt_first_block == header assert).
 
 function(brokeys_warnings target)
     if(MSVC)
