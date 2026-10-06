@@ -15,6 +15,13 @@
         }                                                                  \
     } while (0)
 
+// Chord::to_string names Alt for the host platform: "Option" on macOS.
+#if defined(__APPLE__)
+#define ALT_NAME "Option"
+#else
+#define ALT_NAME "Alt"
+#endif
+
 int main() {
     namespace ev = bronze::embed;
     using namespace bronze::eval;
@@ -62,7 +69,7 @@ int main() {
             "  if (formattedFromObj !== 'Ctrl+Shift+P') return false;\n"
             "\n"
             "  const roundtrip = bro.keys.formatChord(bro.keys.parseChord('Ctrl+Alt+Delete'));\n"
-            "  if (roundtrip !== 'Ctrl+Alt+Delete') return false;\n"
+            "  if (roundtrip !== 'Ctrl+" ALT_NAME "+Delete') return false;\n"
             "\n"
             "  const seq = bro.keys.parseSequence('ctrl+k ctrl+s');\n"
             "  if (!Array.isArray(seq) || seq.length !== 2) return false;\n"
@@ -324,7 +331,7 @@ int main() {
             "    });\n"
             "    const c = bro.keys.parseChord('Ctrl+Shift+Alt+A');\n"
             "    const f = bro.keys.formatChord(c);\n"
-            "    if (f !== 'Ctrl+Shift+Alt+A') return false;\n"
+            "    if (f !== 'Ctrl+Shift+" ALT_NAME "+A') return false;\n"
             "  }\n"
             "\n"
             "  // Verify feed works across all those bindings\n"
