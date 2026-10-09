@@ -142,21 +142,16 @@ include/brokeys/
 
 ### Dependencies
 
-brokeys requires [brosearch](https://github.com/wlejon/brosearch) for linear-time regex matching in `when` clauses. CMake resolves `brosearch` automatically in this order:
-1. An existing `brosearch` target already configured in a parent superbuild (e.g. `bro`).
-2. Sibling directory: `../brosearch` relative to the top-level project, or an explicit `-DBROSEARCH_DIR=<path>`.
-3. Vendored submodule: `third_party/brosearch` within the repository.
+brokeys requires [brosearch](https://github.com/wlejon/brosearch) for linear-time regex matching in `when` clauses. There are no submodules: brosearch (and bronze, for the JavaScript API) is a `bro_dependency()` pin in `CMakeLists.txt`, resolved through `cmake/bro_deps.cmake` in this order:
+1. An existing target already configured in a parent superbuild (e.g. `bro`).
+2. A working tree beside the top-level project (`../brosearch`, `../bronze`), or `-DFETCHCONTENT_SOURCE_DIR_<NAME>=<path>`.
+3. The pinned commit, fetched from GitHub at configure.
 
 ### Standalone build
 
 ```bash
-# Sibling layout (clone side by side):
-git clone https://github.com/wlejon/brosearch
 git clone https://github.com/wlejon/brokeys
-
-# Or single checkout with submodules:
-git clone https://github.com/wlejon/brokeys
-cd brokeys && git submodule update --init --recursive
+cd brokeys
 
 # Linux / macOS (Ninja)
 cmake -B build-release -G Ninja -DCMAKE_BUILD_TYPE=Release
@@ -171,26 +166,17 @@ ctest --test-dir build -C Release --output-on-failure
 
 ### Embedding in a CMake project
 
-Consumers embed brokeys via `add_subdirectory()` and link against `brokeys::brokeys`. Either clone `brokeys` and `brosearch` as siblings, or place them flat under `third_party/`:
-
-```
-my_project/
-  third_party/
-    brokeys/
-    brosearch/
-```
-
-In your `CMakeLists.txt`:
+Consumers embed brokeys via `add_subdirectory()` (bro-ecosystem projects pin it with `bro_dependency(brokeys ...)`) and link against `brokeys::brokeys`; brokeys brings brosearch itself unless the consumer already added it:
 
 ```cmake
-add_subdirectory(third_party/brokeys)
+add_subdirectory(path/to/brokeys)
 
 target_link_libraries(my_app PRIVATE brokeys::brokeys)
 ```
 
 Configuration options:
 - `BROKEYS_BUILD_TESTS`: Build ctest suite (default `ON` when top-level, `OFF` when embedded via `add_subdirectory`).
-- `BROKEYS_ENABLE_API`: Build Bronze JavaScript API binding (default `ON` if Bronze is detected).
+- `BROKEYS_ENABLE_API`: Build Bronze JavaScript API binding (default `ON` when top-level).
 - `BROKEYS_COVERAGE`: Build with gcov coverage instrumentation on GCC/Clang (default `OFF`).
 
 ## Tests

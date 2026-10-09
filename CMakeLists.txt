@@ -41,31 +41,13 @@ function(brokeys_warnings target)
 endfunction()
 
 # ---- brosearch -----------------------------------------------------------------
-# `when` clause `=~` runs on brosearch's linear-time regex engine. Resolved like the other
-# siblings: an existing `brosearch` target (a superbuild already added it) wins; otherwise the
-# standalone repo beside the top-level project (../brosearch, overridable with
-# -DBROSEARCH_DIR=<path>); otherwise the third_party/brosearch submodule of the top-level
-# project. A consumer vendoring brokeys carries brosearch flat in its own third_party/.
-if(NOT TARGET brosearch)
-    set(BROSEARCH_DIR "${CMAKE_SOURCE_DIR}/../brosearch" CACHE PATH
-        "Path to the standalone brosearch repo (set to a missing path to force the submodule)")
-    set(BROSEARCH_BUILD_TESTS OFF CACHE BOOL "" FORCE)
-    set(BROSEARCH_BUILD_TOOLS OFF CACHE BOOL "" FORCE)
-    if(EXISTS "${BROSEARCH_DIR}/CMakeLists.txt")
-        message(STATUS "brokeys: brosearch from ${BROSEARCH_DIR}")
-        add_subdirectory("${BROSEARCH_DIR}" "${CMAKE_BINARY_DIR}/brosearch" EXCLUDE_FROM_ALL)
-    elseif(EXISTS "${CMAKE_SOURCE_DIR}/third_party/brosearch/CMakeLists.txt")
-        message(STATUS "brokeys: brosearch from ${CMAKE_SOURCE_DIR}/third_party/brosearch (submodule)")
-        add_subdirectory("${CMAKE_SOURCE_DIR}/third_party/brosearch" "${CMAKE_BINARY_DIR}/brosearch"
-                         EXCLUDE_FROM_ALL)
-    else()
-        message(FATAL_ERROR
-            "brokeys needs brosearch (its regex engine): not found at ${BROSEARCH_DIR} or "
-            "${CMAKE_SOURCE_DIR}/third_party/brosearch. Clone https://github.com/wlejon/brosearch "
-            "next to this repo, run `git submodule update --init --recursive`, or pass "
-            "-DBROSEARCH_DIR=<path>.")
-    endif()
-endif()
+# `when` clause `=~` runs on brosearch's linear-time regex engine. Resolved through
+# cmake/bro_deps.cmake: an existing `brosearch` target (a superbuild already added it) wins;
+# otherwise the ../brosearch working tree beside the top-level project; otherwise the pinned
+# commit, fetched at configure.
+include(${CMAKE_CURRENT_SOURCE_DIR}/cmake/bro_deps.cmake)
+bro_dependency(brosearch GITHUB wlejon/brosearch REF e408e853181e353e086d547b6d1d3e9cc1c0167f
+               OPTIONS BROSEARCH_BUILD_TESTS=OFF BROSEARCH_BUILD_TOOLS=OFF)
 
 file(GLOB BROKEYS_SOURCES CONFIGURE_DEPENDS src/*.cpp)
 
@@ -87,35 +69,12 @@ brokeys_warnings(brokeys)
 # that wants the api, forces BROKEYS_ENABLE_API ON.
 option(BROKEYS_ENABLE_API "Build Bronze JavaScript API" ${PROJECT_IS_TOP_LEVEL})
 if(BROKEYS_ENABLE_API)
-    # bronze, the JavaScript runtime the api binds: a checkout beside this one
-    # (../bronze, with ../brass beside it — bronze resolves and
-    # add_subdirectory()s its own code generator), the layout of a bro tree and
-    # of CI (bronze's .github/actions/checkout-toolchain), or an explicit
-    # -DBRONZE_DIR. No vendored fallback: the api is bound across bronze's C++
-    # embed boundary, so it has to build against the bronze the surrounding
-    # tree builds against. Under bro this block is skipped, bro having added
-    # bronze already.
-    if(NOT TARGET bronze_runtime_shared)
-        set(BRONZE_BUILD_SHARED_RUNTIME ON CACHE BOOL "" FORCE)
-        set(BRONZE_BUILD_TESTS OFF CACHE BOOL "" FORCE)
-        if(DEFINED BRONZE_DIR AND EXISTS "${BRONZE_DIR}/CMakeLists.txt")
-            # Explicit BRONZE_DIR supplied
-        elseif(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/../bronze/CMakeLists.txt")
-            set(BRONZE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/../bronze" CACHE PATH "bronze source tree")
-        elseif(EXISTS "${CMAKE_SOURCE_DIR}/../bronze/CMakeLists.txt")
-            # Beside the top-level project: this repo is a third_party/
-            # submodule of the project being built.
-            set(BRONZE_DIR "${CMAKE_SOURCE_DIR}/../bronze" CACHE PATH "bronze source tree")
-        endif()
-
-        if(NOT BRONZE_DIR OR NOT EXISTS "${BRONZE_DIR}/CMakeLists.txt")
-            message(FATAL_ERROR
-                "bronze not found: check it out beside this repository (../bronze, with ../brass beside it) "
-                "or pass -DBRONZE_DIR=<path>.")
-        endif()
-
-        add_subdirectory("${BRONZE_DIR}" "${CMAKE_BINARY_DIR}/bronze-build" EXCLUDE_FROM_ALL)
-    endif()
+    # bronze (with brass, its code generator), the JavaScript runtime the api
+    # binds, through cmake/bro_deps.cmake: an outer project's target (under bro
+    # this is bro's own bronze), else ../bronze beside the top-level project,
+    # else the pinned commit, fetched at configure.
+    bro_dependency(bronze GITHUB wlejon/bronze REF 15ce4cf5fc25d8afe03882985ae95adcba46a6a9 TARGET bronze_runtime_shared
+                   OPTIONS BRONZE_BUILD_SHARED_RUNTIME=ON BRONZE_BUILD_TESTS=OFF)
 
     add_subdirectory(src/api)
 endif()

@@ -10,29 +10,14 @@ concurrency:
   group: ci-${{ github.ref }}
   cancel-in-progress: true
 
-# brokeys resolves its one sibling, brosearch (the regex engine behind `when`
-# clause `=~`), from ../brosearch first (see CMakeLists.txt), so the test
-# jobs reconstruct that layout in the runner workspace before configuring:
-#
-#     $GITHUB_WORKSPACE/
-#       brokeys/     <- this repo, checked out into a named path, not the root
-#       brosearch/
-#       bronze/      <- the JavaScript runtime brokeys_api binds
-#       brass/       <- bronze's code generator
-#
-# bronze and brass are laid out by bronze's checkout-toolchain action in every
-# job (the api, BROKEYS_ENABLE_API, is on when brokeys is the top-level
-# project) and compile inside this build tree with the job's own compiler and
-# CRT, which makes brokeys_test_api the check that the library works the way
-# bro uses it. brosearch, nested below brokeys, leaves its own api off.
-#
-# Hence `path:` on the checkouts and `cmake -S brokeys`. brosearch is taken
-# from main, which mirrors how the stack is developed (everything tracks
-# main), so this CI also catches a breaking change landing there.
-#
-# The `submodule` job builds the other way, from third_party/brosearch with no
-# sibling beside it, so the fallback a consumer without the sibling layout
-# relies on cannot rot.
+# brokeys' one sibling, brosearch (the regex engine behind `when` clause
+# `=~`), and bronze with brass (the JavaScript runtime brokeys_api binds; the
+# api, BROKEYS_ENABLE_API, is on when brokeys is the top-level project) come
+# from the commits CMakeLists.txt pins (cmake/bro_deps.cmake), fetched at
+# configure, so every job builds a plain clone. bronze and brass compile inside
+# this build tree with the job's own compiler and CRT, which makes
+# brokeys_test_api the check that the library works the way bro uses it.
+# brosearch, nested below brokeys, leaves its own api off.
 jobs:
   test:
     name: ${{ matrix.name }}
@@ -51,13 +36,6 @@ jobs:
       - uses: actions/checkout@v7
         with:
           path: brokeys
-
-      - uses: actions/checkout@v7
-        with:
-          repository: wlejon/brosearch
-          path: brosearch
-
-      - uses: wlejon/bronze/.github/actions/checkout-toolchain@main
 
       - name: Install Ninja (Linux)
         if: runner.os == 'Linux'
@@ -85,39 +63,6 @@ jobs:
       - name: Test
         run: ctest --test-dir build -C ${{ matrix.config }} --output-on-failure -j 2
 
-  # ── Submodule fallback ────────────────────────────────────────────────────
-  #
-  # No sibling checkout: brosearch comes from third_party/brosearch at the
-  # commit this repo pins. The configure step checks it really took that path.
-  submodule:
-    name: Submodule fallback · ubuntu-24.04
-    runs-on: ubuntu-24.04
-    steps:
-      - uses: actions/checkout@v7
-        with:
-          path: brokeys
-          submodules: recursive
-
-      # bronze and brass are the documented exception to the submodule rule:
-      # the api has to compile against the bronze of the program that loads
-      # it, so there is no submodule for either.
-      - uses: wlejon/bronze/.github/actions/checkout-toolchain@main
-
-      - name: Install Ninja
-        run: sudo apt-get update -qq && sudo apt-get install -y --no-install-recommends ninja-build
-
-      - name: Configure
-        run: |
-          test ! -e brosearch
-          cmake -S brokeys -B build -G Ninja -DCMAKE_BUILD_TYPE=Release | tee configure.log
-          grep -q "brokeys: brosearch from .*third_party/brosearch (submodule)" configure.log
-
-      - name: Build
-        run: cmake --build build --parallel 4
-
-      - name: Test
-        run: ctest --test-dir build --output-on-failure -j 2
-
   # ── Coverage ──────────────────────────────────────────────────────────────
   #
   # Scoped to brokeys' own src/ and include/: brosearch is measured by its own
@@ -129,13 +74,6 @@ jobs:
       - uses: actions/checkout@v7
         with:
           path: brokeys
-
-      - uses: actions/checkout@v7
-        with:
-          repository: wlejon/brosearch
-          path: brosearch
-
-      - uses: wlejon/bronze/.github/actions/checkout-toolchain@main
 
       - name: Install gcovr + Ninja
         run: sudo apt-get update -qq && sudo apt-get install -y --no-install-recommends gcovr ninja-build
