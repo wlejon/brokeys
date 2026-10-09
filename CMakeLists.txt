@@ -46,7 +46,7 @@ endfunction()
 # otherwise the ../brosearch working tree beside the top-level project; otherwise the pinned
 # commit, fetched at configure.
 include(${CMAKE_CURRENT_SOURCE_DIR}/cmake/bro_deps.cmake)
-bro_dependency(brosearch GITHUB wlejon/brosearch REF e408e853181e353e086d547b6d1d3e9cc1c0167f
+bro_dependency(brosearch GITHUB wlejon/brosearch
                OPTIONS BROSEARCH_BUILD_TESTS=OFF BROSEARCH_BUILD_TOOLS=OFF)
 
 file(GLOB BROKEYS_SOURCES CONFIGURE_DEPENDS src/*.cpp)
@@ -73,7 +73,7 @@ if(BROKEYS_ENABLE_API)
     # binds, through cmake/bro_deps.cmake: an outer project's target (under bro
     # this is bro's own bronze), else ../bronze beside the top-level project,
     # else the pinned commit, fetched at configure.
-    bro_dependency(bronze GITHUB wlejon/bronze REF 15ce4cf5fc25d8afe03882985ae95adcba46a6a9 TARGET bronze_runtime_shared
+    bro_dependency(bronze GITHUB wlejon/bronze TARGET bronze_runtime_shared
                    OPTIONS BRONZE_BUILD_SHARED_RUNTIME=ON BRONZE_BUILD_TESTS=OFF)
 
     add_subdirectory(src/api)
