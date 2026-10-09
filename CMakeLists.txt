@@ -72,7 +72,7 @@ if(BROKEYS_ENABLE_API)
     # bronze (with brass, its code generator), the JavaScript runtime the api
     # binds, through cmake/bro_deps.cmake: an outer project's target (under bro
     # this is bro's own bronze), else ../bronze beside the top-level project,
-    # else the pinned commit, fetched at configure.
+    # else the head of its main, fetched at configure.
     bro_dependency(bronze GITHUB wlejon/bronze TARGET bronze_runtime_shared
                    OPTIONS BRONZE_BUILD_SHARED_RUNTIME=ON BRONZE_BUILD_TESTS=OFF)
 

@@ -145,7 +145,7 @@ include/brokeys/
 brokeys requires [brosearch](https://github.com/wlejon/brosearch) for linear-time regex matching in `when` clauses. There are no submodules: brosearch (and bronze, for the JavaScript API) is a `bro_dependency()` pin in `CMakeLists.txt`, resolved through `cmake/bro_deps.cmake` in this order:
 1. An existing target already configured in a parent superbuild (e.g. `bro`).
 2. A working tree beside the top-level project (`../brosearch`, `../bronze`), or `-DFETCHCONTENT_SOURCE_DIR_<NAME>=<path>`.
-3. The pinned commit, fetched from GitHub at configure.
+3. The head of its main branch, fetched from GitHub at configure.
 
 ### Standalone build
 
@@ -166,7 +166,7 @@ ctest --test-dir build -C Release --output-on-failure
 
 ### Embedding in a CMake project
 
-Consumers embed brokeys via `add_subdirectory()` (bro-ecosystem projects pin it with `bro_dependency(brokeys ...)`) and link against `brokeys::brokeys`; brokeys brings brosearch itself unless the consumer already added it:
+Consumers embed brokeys via `add_subdirectory()` (bro-ecosystem projects declare it with `bro_dependency(brokeys ...)`) and link against `brokeys::brokeys`; brokeys brings brosearch itself unless the consumer already added it:
 
 ```cmake
 add_subdirectory(path/to/brokeys)
