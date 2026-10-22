@@ -160,15 +160,17 @@ Chord jsObjectToChord(Value chordObj) {
     }
 
     Modifiers mods;
-    Value modsVal = ev::getProperty(obj.get(), "modifiers");
-    if (ev::isObject(modsVal)) {
-        ev::Persistent mObj(modsVal);
+    ev::Persistent mObj(ev::getProperty(obj.get(), "modifiers"));
+    if (!ev::isObject(mObj.get())) {
+        mObj.set(ev::getProperty(obj.get(), "mods"));
+    }
+    if (ev::isObject(mObj.get())) {
         uint32_t len = arrayLength(mObj.get());
         if (len > 0) {
             for (uint32_t i = 0; i < len; ++i) {
-                Value item = ev::getElement(mObj.get(), i);
-                if (ev::isString(item)) {
-                    std::string m = toLowerAscii(ev::toUtf8(item));
+                ev::Persistent item(ev::getElement(mObj.get(), i));
+                if (ev::isString(item.get())) {
+                    std::string m = toLowerAscii(ev::toUtf8(item.get()));
                     if (m == "ctrl" || m == "control") mods = mods.with_ctrl(true);
                     else if (m == "shift") mods = mods.with_shift(true);
                     else if (m == "alt" || m == "option" || m == "opt") mods = mods.with_alt(true);
@@ -320,15 +322,13 @@ Value makeUnhandledResult() {
 
 Value hostEngineCtor(Value /*thisVal*/, std::span<const Value> args) {
     ArgReader r(args);
-    Value optsVal = r.get(0);
+    ev::Persistent opts(r.get(0));
 
     KeyboardLayout layout = KeyboardLayout::qwerty();
     std::chrono::milliseconds timeout{5000};
     KeybindingTable table;
 
-    if (ev::isObject(optsVal)) {
-        ev::Persistent opts(optsVal);
-
+    if (ev::isObject(opts.get())) {
         Value layoutVal = ev::getProperty(opts.get(), "layout");
         if (ev::isString(layoutVal)) {
             std::string l = toLowerAscii(ev::toUtf8(layoutVal));
@@ -347,25 +347,22 @@ Value hostEngineCtor(Value /*thisVal*/, std::span<const Value> args) {
     }
 
     auto* engine = new HostEngine(std::move(table), std::move(layout), timeout);
-    Value instance = g_engineClass.make(engine, hostEngineDtor);
+    ev::Persistent instance(g_engineClass.make(engine, hostEngineDtor));
 
-    if (ev::isObject(optsVal)) {
-        ev::Persistent opts(optsVal);
-
-        Value ctxVal = ev::getProperty(opts.get(), "context");
-        if (ev::isObject(ctxVal)) {
-            ev::Persistent ctxObj(ctxVal);
+    if (ev::isObject(opts.get())) {
+        ev::Persistent ctxObj(ev::getProperty(opts.get(), "context"));
+        if (ev::isObject(ctxObj.get())) {
             auto keys = objectKeys(ctxObj.get());
             for (const auto& k : keys) {
-                Value v = ev::getProperty(ctxObj.get(), k);
-                if (ev::isBool(v)) engine->dispatcher->context().set_bool(k, ev::toBool(v));
-                else if (ev::isNumber(v)) engine->dispatcher->context().set_number(k, ev::toDouble(v));
-                else if (ev::isString(v)) engine->dispatcher->context().set_string(k, ev::toUtf8(v));
+                ev::Persistent v(ev::getProperty(ctxObj.get(), k));
+                if (ev::isBool(v.get())) engine->dispatcher->context().set_bool(k, ev::toBool(v.get()));
+                else if (ev::isNumber(v.get())) engine->dispatcher->context().set_number(k, ev::toDouble(v.get()));
+                else if (ev::isString(v.get())) engine->dispatcher->context().set_string(k, ev::toUtf8(v.get()));
             }
         }
     }
 
-    return instance;
+    return instance.get();
 }
 
 void decorateEngineProto(ObjectBuilder& proto) {
@@ -402,16 +399,16 @@ void decorateEngineProto(ObjectBuilder& proto) {
         }
 
         std::string argsStr;
-        Value argsVal = ev::getProperty(bObj.get(), "args");
-        if (ev::isString(argsVal)) {
-            argsStr = ev::toUtf8(argsVal);
-        } else if (ev::isObject(argsVal) || ev::isNumber(argsVal) || ev::isBool(argsVal)) {
+        ev::Persistent argsP(ev::getProperty(bObj.get(), "args"));
+        if (ev::isString(argsP.get())) {
+            argsStr = ev::toUtf8(argsP.get());
+        } else if (ev::isObject(argsP.get()) || ev::isNumber(argsP.get()) || ev::isBool(argsP.get())) {
             ev::GlobalValue jsonGlobal = ev::globalValue("JSON");
             if (jsonGlobal.found && ev::isObject(jsonGlobal.value)) {
                 ev::Persistent jsonP(jsonGlobal.value);
                 ev::Persistent stringify(ev::getProperty(jsonP.get(), "stringify"));
                 if (ev::isFunction(stringify.get())) {
-                    const Value arg = argsVal;
+                    const Value arg = argsP.get();
                     auto res = ev::call(stringify.get(), jsonP.get(), std::span<const Value>(&arg, 1));
                     if (!res.thrown && ev::isString(res.value)) {
                         argsStr = ev::toUtf8(res.value);
@@ -463,8 +460,9 @@ void decorateEngineProto(ObjectBuilder& proto) {
         HostEngine* engine = hostEngineOf(self);
         if (!engine) return ev::throwTypeError("bro.keys.Engine method called on invalid object");
         ArgReader r(args);
+        ev::Persistent valP(r.get(1));
         std::string key = r.getString(0);
-        Value val = r.get(1);
+        Value val = valP.get();
         if (ev::isBool(val)) {
             engine->dispatcher->context().set_bool(key, ev::toBool(val));
         } else if (ev::isNumber(val)) {
@@ -655,18 +653,17 @@ void installKeysOnto(Value keysObj) {
 
     keys.def("formatSequence", 1, [](Value /*thisVal*/, std::span<const Value> args) -> Value {
         ArgReader r(args);
-        Value seqVal = r.get(0);
-        if (ev::isString(seqVal)) {
-            return seqVal;
+        ev::Persistent seqVal(r.get(0));
+        if (ev::isString(seqVal.get())) {
+            return seqVal.get();
         }
-        if (ev::isObject(seqVal)) {
-            ev::Persistent sObj(seqVal);
-            uint32_t len = arrayLength(sObj.get());
+        if (ev::isObject(seqVal.get())) {
+            uint32_t len = arrayLength(seqVal.get());
             if (len > 0) {
                 std::vector<Chord> chords;
                 for (uint32_t i = 0; i < len; ++i) {
-                    Value item = ev::getElement(sObj.get(), i);
-                    chords.push_back(jsObjectToChord(item));
+                    ev::Persistent item(ev::getElement(seqVal.get(), i));
+                    chords.push_back(jsObjectToChord(item.get()));
                 }
                 KeySequence seq(std::move(chords));
                 return ev::fromUtf8(seq.to_string());

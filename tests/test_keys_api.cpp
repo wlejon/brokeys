@@ -319,7 +319,12 @@ int main() {
     {
         auto r = evalScript(
             "(function() {\n"
-            "  const engine = new bro.keys.Engine();\n"
+            "  const initCtx = {};\n"
+            "  for (let i = 0; i < 100; ++i) {\n"
+            "    initCtx['init_' + i] = 'v_' + i;\n"
+            "  }\n"
+            "  const engine = new bro.keys.Engine({ layout: 'qwerty', timeoutMs: 2500, context: initCtx });\n"
+            "  if (engine.getContext('init_99') !== 'v_99') return false;\n"
             "  // Allocate thousands of objects and chords in loop\n"
             "  for (let i = 0; i < 200; ++i) {\n"
             "    engine.setContext('ctx_' + i, 'val_' + i);\n"
@@ -332,6 +337,8 @@ int main() {
             "    const c = bro.keys.parseChord('Ctrl+Shift+Alt+A');\n"
             "    const f = bro.keys.formatChord(c);\n"
             "    if (f !== 'Ctrl+Shift+" ALT_NAME "+A') return false;\n"
+            "    const fMods = bro.keys.formatChord({ key: 'A', mods: ['ctrl', 'shift'] });\n"
+            "    if (fMods !== 'Ctrl+Shift+A') return false;\n"
             "  }\n"
             "\n"
             "  // Verify feed works across all those bindings\n"
