@@ -1,6 +1,5 @@
 add_library(brokeys_api STATIC
     api.cpp
-    host_class.cpp
     native_keys.cpp
 )
 
